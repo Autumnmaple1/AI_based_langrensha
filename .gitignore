@@ -1,0 +1,14 @@
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+*.egg-info/
+runtime/
+test-results/
+*.sqlite3*
+multi_agent/config.local.json
+multi_agent/runs/
+
+# 社员本机的模型设置与临时文件（不要把密钥配置提交上来）
+my_settings.json
+agents/**/my_settings.json

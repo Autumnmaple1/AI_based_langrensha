@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mooncourt"
+version = "1.1.0"
+description = "Nine-player Werewolf referee, remote agent SDK and live dashboard"
+requires-python = ">=3.11"
+dependencies = ["aiohttp>=3.10,<4"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2"]
+
+[tool.setuptools.packages.find]
+include = ["werewolf*", "multi_agent*", "agents*"]
+
+[tool.setuptools.package-data]
+werewolf = ["static/*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests", "multi_agent"]

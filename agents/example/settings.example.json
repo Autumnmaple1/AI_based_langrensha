@@ -1,0 +1,8 @@
+{
+  "_说明": "这是单个 Agent 的模型设置示例（可选）。复制成 my_settings.json 后改好，用 agents/run.py --settings my_settings.json 传给自己的 agent。不填也能跑：示例 agent 会退化成不调用模型的启发式。",
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-chat",
+  "api_key_env": "WEREWOLF_API_KEY",
+  "timeout_seconds": 20,
+  "temperature": 0.7
+}

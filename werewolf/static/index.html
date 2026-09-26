@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#111112">
+  <title>月下 · AI 狼人杀</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <header class="header">
+    <a class="brand" href="/" aria-label="月下首页"><span class="brand-symbol" aria-hidden="true">◕</span></a>
+    <div class="header-right"><span id="network" class="network" aria-label="连接状态" title="连接状态"></span><button id="login-button" class="text-button">主持人登录 ↗</button></div>
+  </header>
+  <main>
+    <section class="match-heading" aria-label="当前比赛">
+      <div><h1 id="round-title">等待开局<span class="title-dot">.</span></h1><p id="stage" class="stage-description">等待九位 Agent 入席。</p></div>
+      <div class="match-controls">
+        <div class="buttons"><button id="start" class="primary" hidden>开始对局 ↗</button><button id="step-next" class="primary" hidden>下一步</button><button id="step-toggle" class="secondary" hidden>切换自动</button><details id="host-menu" class="host-menu" hidden><summary aria-label="比赛管理">•••</summary><div class="menu-panel"><button id="archive-open">历史对局</button><button id="export">导出记录</button><button id="abort" class="danger">中止对局</button></div></details></div>
+      </div>
+    </section>
+    <div class="arena-layout">
+      <section class="seats-panel" aria-label="玩家席位">
+        <div id="players" class="players"></div>
+      </section>
+      <aside class="focus-panel" aria-label="当前行动">
+        <div class="focus-heading"><span id="focus-label">正在发生</span><span id="focus-time"></span></div>
+        <div id="focus-content" class="focus-content"><span class="focus-number">09<span>席</span></span><h2>即将入夜</h2><p>Agent 就绪后，由主持人开始对局。</p></div>
+        <div id="focus-footer" class="focus-footer">等待开局</div>
+      </aside>
+    </div>
+    <div class="bottom-layout">
+      <section class="chronicle" aria-label="对局动态">
+        <div class="section-heading"><h2>对局动态</h2></div>
+        <div id="events" class="events" aria-live="polite"><p class="empty">对局开始后，发言与关键事件会出现在这里。</p></div>
+      </section>
+      <section class="vote-panel" aria-labelledby="votes-title"><div class="section-heading"><h2 id="votes-title">最新票型</h2><span id="vote-round" class="muted">尚未投票</span></div><div id="vote-content" class="vote-content"><p class="empty">投票结束后统一公布。</p></div></section>
+    </div>
+    <details id="diagnostics" class="diagnostics" hidden><summary>技术详情 <span id="diagnostic-count"></span></summary><div id="actions" class="request-grid"></div><div id="technical-events" class="technical-events"></div></details>
+    <div id="replay-bar" class="replay-bar" hidden><span>历史回放</span><button id="replay-play" class="secondary">播放</button><input id="replay-position" type="range" min="0" value="0" aria-label="回放进度"><span id="replay-count"></span><button id="exit-replay" class="text-button">返回实时 ↗</button></div>
+  </main>
+  <dialog id="login"><form id="login-form"><p class="eyebrow">主持人</p><h2>进入控制台</h2><p>查看完整身份，控制比赛进程。</p><label for="token">主持人凭证</label><input id="token" type="password" autocomplete="off" required placeholder="输入 admin_token"><p id="login-error" role="alert"></p><div class="dialog-actions"><button type="button" id="cancel-login" class="secondary">取消</button><button type="submit" class="primary">登录 ↗</button></div></form></dialog>
+  <dialog id="abort-dialog"><h2>中止这场比赛？</h2><p>记录会保留，本局不计胜负。如果只是暂时离开，请使用暂停。</p><div class="dialog-actions"><button id="cancel-abort" class="secondary">返回比赛</button><button id="confirm-abort" class="danger">确认中止</button></div></dialog>
+  <dialog id="archive-dialog"><div class="section-heading"><h2>历史对局</h2><button id="archive-close" class="text-button">关闭 ×</button></div><div id="archive-list"></div></dialog>
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>
