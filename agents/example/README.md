@@ -18,7 +18,7 @@ python -m agents.run --agent agents/example/baseline_agent.py --credentials agen
 
 ## 2. `llm_agent.py`：把决策交给模型（单实例）
 
-它参考了主办方批量跑九实例用的 `multi_agent/agent.py`，但只保留**一个连接、一份设置**：
+它可单独运行，也可由多实例运行器按文件和类名加载；每个实例独立维护自己的设置和策略状态：
 
 - 先算好启发式的兜底答案，再去问模型；
 - 只把"形势卡"（我的身份、存活名单、最近发言摘要、当前请求）发给模型，不给原始历史——

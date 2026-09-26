@@ -1,7 +1,6 @@
 """单实例示例：把决策交给一个兼容 Chat Completions 的模型，失败就退回启发式。
 
-这段代码参考了 `multi_agent/agent.py`，但那个目录是主办方批量跑九个实例用的；
-社员只需要**一个** Agent，所以这里只保留一个连接、一份设置，逻辑也更短。
+本类可通过 agents.run 启动一个实例，也可由 multi_agent.run 加载多个独立实例。
 
 要不要用模型由设置决定（见 settings.example.json）：
 
@@ -44,7 +43,7 @@ class LlmAgent:
     """接口和模板完全一样：act() 必须有，两个钩子可选。"""
 
     def __init__(self, seed=None, *, base_url=None, model=None, api_key_env="WEREWOLF_API_KEY",
-                 timeout_seconds=20, temperature=0.7, **_ignored):
+                 timeout_seconds=20, temperature=0.7):
         self.baseline = BaselineAgent(seed=seed)     # 兜底策略，顺便也用来读历史
         self.base_url = base_url
         self.model = model
@@ -100,7 +99,7 @@ class LlmAgent:
         text = data["choices"][0]["message"]["content"]
         if isinstance(text, str) and text.strip().startswith("```"):
             text = text.strip().strip("`").removeprefix("json").strip()
-        return strict_loads(text)          # 严格 JSON：多一个字段都会被拒
+        return strict_loads(text)          # 动作字段由 validate_action 校验
 
     def _situation(self, observation, request):
         """给模型看的"形势卡"：只放它需要的，别把原始历史整个丢过去（越长越慢）。"""

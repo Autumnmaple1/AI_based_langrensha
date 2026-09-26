@@ -4,11 +4,13 @@ import sys
 from contextlib import asynccontextmanager
 
 import pytest
-from aiohttp import web, ClientSession
+from aiohttp import web
 from werewolf.protocol import validate_action
 from werewolf.server import create_app, HUB_KEY
 from werewolf.replay import verify_replay
-from .agent import WerewolfAgent
+from agents.example.llm_agent import LlmAgent
+from agents.example.baseline_agent import BaselineAgent
+from pathlib import Path
 from .run import run_config, load_config
 from werewolf.scenarios import cases, fixture
 
@@ -38,19 +40,20 @@ async def test_every_action_through_chat_completions(case):
         payload = await incoming.json()
         assert payload["model"] == "test-model"
         sent = json.loads(payload["messages"][1]["content"])
-        assert sent == dict(observation=observation, request=request)
+        assert sent["request"] == {"type": request["type"], "content": request["content"]}
+        assert sent["my_seat"] == request["player_id"]
         return web.json_response({"choices":[{"message":{"content":json.dumps(expected)}}]})
     app = web.Application(); app.router.add_post("/v1/chat/completions", model)
-    async with serve(app) as base, ClientSession() as session:
-        agent = WerewolfAgent(dict(mode="llm", base_url=base+"/v1", model="test-model", api_key_env=""), session)
+    async with serve(app) as base:
+        agent = LlmAgent(base_url=base+"/v1", model="test-model", api_key_env="")
         assert await agent.act(observation, request) == expected
-        assert agent.stats["model_success"] == 1 and agent.stats["fallback"] == 0
+
 
 
 @pytest.mark.parametrize("case", cases(), ids=lambda c:c[0])
 async def test_baseline_is_legal_for_every_request(case):
     observation, request, _ = fixture(case)
-    action = await WerewolfAgent(dict(mode="baseline")).act(observation, request)
+    action = await BaselineAgent().act(observation, request)
     validate_action(request["type"], request["content"], action)
 
 
@@ -66,12 +69,10 @@ async def test_failed_model_is_reported_and_falls_back(failure):
         return web.json_response({"choices":[{"message":{"content":content}}]})
     app = web.Application(); app.router.add_post("/v1/chat/completions", model)
     observation, request, _ = fixture(next(c for c in cases() if c[0]=="seer"))
-    logs = []
-    async with serve(app) as base, ClientSession() as session:
-        agent = WerewolfAgent(dict(mode="llm", base_url=base+"/v1", model="test", api_key_env="", timeout_seconds=.02), session, log=logs.append)
+    async with serve(app) as base:
+        agent = LlmAgent(base_url=base+"/v1", model="test", api_key_env="", timeout_seconds=.02)
         validate_action(request["type"], request["content"], await agent.act(observation, request))
-        assert agent.stats["fallback"] == agent.stats["model_errors"] == 1
-        assert any(e["event"] == "model_error" for e in logs)
+        assert await agent.act(observation, request) == await agent.baseline.act(observation, request)
 
 
 async def test_cancellation_does_not_submit_fallback():
@@ -82,13 +83,13 @@ async def test_cancellation_does_not_submit_fallback():
         return web.json_response({})
     app = web.Application(); app.router.add_post("/v1/chat/completions", model)
     observation, request, _ = fixture(cases()[0])
-    async with serve(app) as base, ClientSession() as session:
-        agent = WerewolfAgent(dict(mode="llm", base_url=base+"/v1", model="test", api_key_env=""), session)
+    async with serve(app) as base:
+        agent = LlmAgent(base_url=base+"/v1", model="test", api_key_env="")
         task = asyncio.create_task(agent.act(observation, request))
         await entered.wait(); task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert agent.stats["decisions"] == agent.stats["fallback"] == 0
+        assert task.cancelled()
 
 
 def write_config(tmp_path, server, settings=None):
@@ -99,7 +100,7 @@ def write_config(tmp_path, server, settings=None):
         file.write_text(json.dumps(dict(agent_id=aid, token=token)), encoding="utf-8")
         entries.append(dict(credentials=file.name))
     path = tmp_path / "batch.json"
-    path.write_text(json.dumps(dict(server=server, defaults=settings or dict(mode="baseline"), agents=entries)), encoding="utf-8")
+    path.write_text(json.dumps(dict(server=server, defaults=settings or {}, agent=str(Path(__file__).resolve().parents[1] / ("agents/example/llm_agent.py" if settings else "agents/example/baseline_agent.py")), agents=entries)), encoding="utf-8")
     return path, agents
 
 
@@ -189,6 +190,8 @@ def test_member_overrides_and_invalid_interface(tmp_path):
 class Other(Student):
     pass
 class Invalid:
+    def __init__(self, label=None):
+        pass
     def act(self, observation, request):
         return {}
 ''', encoding="utf-8")
@@ -206,14 +209,13 @@ class Invalid:
         load_members(load_config(path)[2])
 
 
-async def test_live_member_config_is_not_silently_replaced(tmp_path):
-    from .validate import live_check
+def test_missing_agent_is_rejected(tmp_path):
+    from .run import ConfigError
     path, _ = write_config(tmp_path, "ws://unused")
-    (tmp_path / "member.py").write_text("", encoding="utf-8")
-    data = json.loads(path.read_text()); data["agent"] = "member.py"
-    path.write_text(json.dumps(data), encoding="utf-8")
-    with pytest.raises(ValueError, match="--live only supports"):
-        await live_check(path)
+    data = json.loads(path.read_text()); del data["agent"]
+    path.write_text(json.dumps(data))
+    with pytest.raises(ConfigError, match="must specify an agent"):
+        load_config(path)
 
 
 def test_duplicate_ids_rejected(tmp_path):
@@ -224,31 +226,19 @@ def test_duplicate_ids_rejected(tmp_path):
         load_config(path)
 
 
-def test_missing_key_rejected_before_connections(tmp_path, monkeypatch):
-    monkeypatch.delenv("MISSING_TEST_KEY", raising=False)
-    path, _ = write_config(tmp_path, "ws://localhost/ws/agent", dict(mode="llm", model="test", base_url="https://example.com/v1", api_key_env="MISSING_TEST_KEY"))
-    with pytest.raises(ValueError, match="Missing environment"):
-        load_config(path)
-
-
-def test_literal_key_has_safe_actionable_error(tmp_path):
-    secret = "sk-test-secret-not-an-environment-variable"
-    path, _ = write_config(tmp_path, "ws://localhost/ws/agent", dict(mode="llm", model="test", base_url="https://example.com/v1", api_key_env=secret))
-    from .run import ConfigError
-    with pytest.raises(ConfigError) as failure:
-        load_config(path)
-    assert "environment variable NAME" in str(failure.value)
-    assert secret not in str(failure.value)
-
-
 async def test_command_line_nine_model_agents_complete_match(tmp_path):
-    from werewolf.example_agent import ExampleAgent
     calls = []
     async def model(incoming):
         data = await incoming.json()
         visible = json.loads(data["messages"][1]["content"])
         calls.append(visible["request"]["type"])
-        action = await ExampleAgent(seed=1).act(visible["observation"], visible["request"])
+        kind, content = visible["request"]["type"], visible["request"]["content"]
+        if kind in ("speech", "speech_dying"):
+            action = {"action": "speak", "text": "mock-model-success"}
+        elif kind in ("witch_act", "hunter_act"):
+            action = {"action": "pass"}
+        else:
+            action = {"action": "kill_vote" if kind.startswith("werewolves") else "inspect" if kind == "seer_act" else "vote", "target": content["legal_targets"][-1]}
         # Send separate chunks to exercise HTTP streaming transport assembly.
         payload = json.dumps({"choices":[{"message":{"content":json.dumps(action)}}]}).encode()
         response = web.StreamResponse(headers={"Content-Type":"application/json"})
@@ -258,7 +248,7 @@ async def test_command_line_nine_model_agents_complete_match(tmp_path):
         return response
     mock = web.Application(); mock.router.add_post("/v1/chat/completions", model)
     async with serve(mock) as model_base:
-        path, credentials = write_config(tmp_path, "ws://placeholder", dict(mode="llm",base_url=model_base+"/v1",model="test",api_key_env=""))
+        path, credentials = write_config(tmp_path, "ws://placeholder", dict(base_url=model_base+"/v1",model="test",api_key_env=""))
         app = create_app(dict(agents=credentials, admin_token="host",auto_start=True,pace_ms=0,step_interval_ms=0,
                               limits=dict(action_timeout_ms=4000,max_days=4)), ":memory:")
         async with serve(app) as base:
@@ -275,8 +265,8 @@ async def test_command_line_nine_model_agents_complete_match(tmp_path):
             assert not app[HUB_KEY].failure
     summary = json.loads(next(tmp_path.glob("runs/*/summary.json")).read_text(encoding="utf-8"))
     assert len(summary)==9 and calls
-    assert all(row["completed_games"]==1 and row["fallback"]==0 and not row["sdk_errors"] for row in summary)
-    assert sum(row["model_success"] for row in summary)==len(calls)
+    assert all(row["completed_games"]==1 and not row["sdk_errors"] for row in summary)
+    assert sum(row["decisions"] for row in summary)==len(calls)
     assert all(row["result"]==summary[0]["result"] for row in summary)
 
 
@@ -291,17 +281,3 @@ async def test_auth_failure_exits_and_writes_report(tmp_path):
             await asyncio.wait_for(run_config(path,once=True),5)
     summary=json.loads(next(tmp_path.glob("runs/*/summary.json")).read_text(encoding="utf-8"))
     assert summary[0]["completed_games"]==0
-
-
-async def test_live_validator_does_not_count_fallback_as_model_pass(tmp_path):
-    from .validate import live_check
-    calls = []
-    async def model(incoming):
-        calls.append(1)
-        return web.Response(status=429)
-    app=web.Application(); app.router.add_post("/v1/chat/completions",model)
-    async with serve(app) as base:
-        path,_=write_config(tmp_path,"ws://unused",dict(mode="llm",base_url=base+"/v1",model="test",api_key_env=""))
-        data=json.loads(path.read_text()); data["agents"]=data["agents"][:1]; path.write_text(json.dumps(data))
-        rows=await live_check(path)
-    assert len(calls)==len(rows)==14 and all(not row["passed"] for row in rows)

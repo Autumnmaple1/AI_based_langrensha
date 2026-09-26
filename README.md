@@ -353,7 +353,7 @@ python -m multi_agent.run --config multi_agent/config.local.json --once
 
 九个实例会独立调用模型，可能遇到并发限流并产生费用。模型成功与兜底统计需要由社员自己的代码记录，通用运行器只记录最终返回动作，不会把合法动作当作模型成功。
 
-为兼容旧配置，完全不指定 `agent` 的实例仍使用内置 `WerewolfAgent`；旧配置中的 `mode: baseline/llm` 只用于该兼容模式。新示例默认加载社员模板，无需模型密钥。详细配置见 [多实例指南](multi_agent/README.md)。
+所有实例都必须通过 `agent` 指定入口文件（顶层统一指定或逐项指定）。新示例默认加载社员模板，无需模型密钥。详细配置见 [多实例指南](multi_agent/README.md)。
 
 ## 规则摘要
 
@@ -392,13 +392,7 @@ python -m werewolf.replay runtime/exported-game.json
 
 看板数据测试在检测到 Node.js 时由 pytest 自动运行，否则跳过；也可执行 `node --test tests/dashboard.test.mjs`。运行看板本身不需要 Node.js。
 
-以下真实模型验证仅适用于未指定 `agent` 的旧版内置模型配置；社员类请使用 `agents.check` 与实际对局验证（合法兜底也能通过自检）：
-
-```powershell
-python -m multi_agent.validate --live multi_agent/config.local.json
-```
-
-该命令先跑离线测试，再对配置中的每个实例发起 14 次模型调用，九个实例共 126 次，可能产生费用。真实模型验证中，超时、非法动作和策略兜底均视为失败。
+真实模型接入请对自己的 Agent 使用 `agents.check --settings` 并进行实际对局验证。自检只检查最终动作合法性，合法兜底也会通过；模型调用成功率应由 Agent 自己记录。
 
 回放校验器复核角色分配、票数、死亡、终局与私有消息序列的一致性；它不重新调用 Agent，也不重新抽取随机结果。
 

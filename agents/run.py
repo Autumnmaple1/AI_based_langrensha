@@ -24,20 +24,12 @@ DEFAULT_SERVER = "ws://127.0.0.1:8765/ws/agent"
 
 
 def build_agent(klass, seed=None, settings=None):
-    """实例化 Agent 类：klass(seed=..., **settings) → klass(**settings) → klass()。
-
-    所以你的类可以不接受 seed，也可以只挑自己认识的设置项；多余的设置项会被忽略。
-    """
-    settings = settings or {}
-    attempts = [dict(settings)] if seed is None else [dict(seed=seed, **settings), dict(settings)]
-    attempts.append({})
-    last_error = None
-    for attempt in attempts:
-        try:
-            return klass(**attempt)
-        except TypeError as exc:     # 你的类不一定接受 seed，也不一定认识这些设置项
-            last_error = exc
-    raise SystemExit(f"无法实例化 {klass.__name__}：{last_error}")
+    """Explicit settings must match the constructor; never silently discard them."""
+    kwargs = dict(settings or {})
+    if seed is not None:
+        kwargs["seed"] = seed
+    inspect.signature(klass).bind(**kwargs)
+    return klass(**kwargs)
 
 
 def load_agent(path, class_name=None, seed=None, settings=None):

@@ -3,14 +3,10 @@ import argparse
 import asyncio
 import json
 import inspect
-import os
-import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from aiohttp import ClientSession
 from werewolf.sdk import AgentClient
-from .agent import WerewolfAgent
 from agents.run import load_agent
 
 
@@ -21,7 +17,7 @@ class ConfigError(ValueError):
 def load_config(path):
     path = Path(path).resolve()
     data = json.loads(path.read_text(encoding="utf-8-sig"))
-    server = data.get("server", "ws://127.0.0.1:8765/ws/agent")
+    server = data.get("server", "ws://127.0.0.1:8766/ws/agent")
     if urlsplit(server).scheme not in {"ws", "wss", "http", "https"}:
         raise ValueError("server must be a WebSocket URL")
     specs, ids = [], set()
@@ -36,33 +32,13 @@ def load_config(path):
         settings = {**data.get("defaults", {}), **item.get("settings", {})}
         agent_file = item.get("agent", data.get("agent"))
         class_name = item.get("class", data.get("class"))
-        if agent_file is not None:
-            agent_path = (path.parent / agent_file).resolve()
-            if not agent_path.is_file():
-                raise ConfigError(f"Agent file not found: {agent_path}")
-            specs.append(dict(agent_id=aid, token=token, settings=settings,
-                              seed=item.get("seed", index), agent=str(agent_path), class_name=class_name))
-            continue
-        mode = settings.get("mode", "baseline")
-        if mode not in {"llm", "baseline"}:
-            raise ValueError("mode must be llm or baseline")
-        if float(settings.get("timeout_seconds", 20)) <= 0:
-            raise ValueError("timeout_seconds must be positive")
-        if mode == "llm":
-            url = urlsplit(settings.get("base_url", ""))
-            if url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password or url.query:
-                raise ValueError("base_url must be an HTTP(S) API root without credentials/query")
-            if not settings.get("model"):
-                raise ValueError("Set model for every llm agent")
-            env = settings.get("api_key_env", "WEREWOLF_API_KEY")
-            if not isinstance(env, str) or (env and (env.startswith("sk-") or len(env)>64 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", env))):
-                raise ConfigError("api_key_env must be an environment variable NAME, not an API key. "
-                                  "Set it to WEREWOLF_API_KEY, then set $env:WEREWOLF_API_KEY in the same PowerShell terminal before starting.")
-            if env and not os.environ.get(env):
-                raise ConfigError("Missing environment variable for api_key_env. "
-                                  "Set the key in the same terminal before starting; for the default name: "
-                                  '$env:WEREWOLF_API_KEY = "your API key"')
-        specs.append(dict(agent_id=aid, token=token, settings=settings, seed=item.get("seed", index)))
+        if not isinstance(agent_file, str) or not agent_file.strip():
+            raise ConfigError("Every instance must specify an agent file (top-level or per-instance)")
+        agent_path = (path.parent / agent_file).resolve()
+        if not agent_path.is_file():
+            raise ConfigError(f"Agent file not found: {agent_path}")
+        specs.append(dict(agent_id=aid, token=token, settings=settings,
+                          seed=item.get("seed"), agent=str(agent_path), class_name=class_name))
     if not specs:
         raise ValueError("Configure at least one agent")
     return data, server, specs
@@ -103,8 +79,6 @@ def load_members(specs):
     """Load and validate every member before opening any referee connection."""
     members = {}
     for index, spec in enumerate(specs):
-        if "agent" not in spec:
-            continue  # Compatibility for existing built-in model configurations.
         try:
             agent = load_agent(spec["agent"], spec["class_name"], spec["seed"], spec["settings"])
         except (Exception, SystemExit) as exc:
@@ -142,29 +116,27 @@ async def run_config(path, *, once=False, duration=None, output=None):
     clients, agents, handles, tasks = [], [], [], []
     print(f"Starting {len(specs)} agents. Logs: {output.resolve()}", flush=True)
     try:
-        async with ClientSession() as session:
-            for index, spec in enumerate(specs):
-                # Numeric filenames prevent user-controlled IDs becoming filesystem paths.
-                handle = (output / f"agent-{index+1:02}.jsonl").open("w", encoding="utf-8")
-                handles.append(handle)
-                def log(event, handle=handle, aid=spec["agent_id"]):
-                    handle.write(json.dumps(dict(at=datetime.now(timezone.utc).isoformat(), agent_id=aid, **event), ensure_ascii=False)+"\n")
-                    handle.flush()
-                agent = (MemberAgent(members[index], log) if index in members else
-                         WerewolfAgent(spec["settings"], session, seed=spec["seed"], log=log))
-                client = LoggedClient(server, spec["agent_id"], spec["token"], agent, log=log, stop_after_game=once)
-                agents.append(agent); clients.append(client)
-            try:
-                tasks = [asyncio.create_task(client.run()) for client in clients]
-                if duration:
-                    async with asyncio.timeout(duration):
-                        await asyncio.gather(*tasks)
-                else:
+        for index, spec in enumerate(specs):
+            # Numeric filenames prevent user-controlled IDs becoming filesystem paths.
+            handle = (output / f"agent-{index+1:02}.jsonl").open("w", encoding="utf-8")
+            handles.append(handle)
+            def log(event, handle=handle, aid=spec["agent_id"]):
+                handle.write(json.dumps(dict(at=datetime.now(timezone.utc).isoformat(), agent_id=aid, **event), ensure_ascii=False)+"\n")
+                handle.flush()
+            agent = MemberAgent(members[index], log)
+            client = LoggedClient(server, spec["agent_id"], spec["token"], agent, log=log, stop_after_game=once)
+            agents.append(agent); clients.append(client)
+        try:
+            tasks = [asyncio.create_task(client.run()) for client in clients]
+            if duration:
+                async with asyncio.timeout(duration):
                     await asyncio.gather(*tasks)
-            finally:
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+            else:
+                await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
     finally:
         report = [dict(agent_id=c.agent_id, result=c.result, completed_games=len(c.finished_games),
                        sdk_errors=c.errors, **a.stats) for c, a in zip(clients, agents)]

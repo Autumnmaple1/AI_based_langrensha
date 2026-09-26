@@ -83,14 +83,28 @@ def test_cli_exit_codes(tmp_path, capsys):
     assert "有检查未通过" in output and "找不到文件" in output
 
 
-def test_run_loader_passes_settings_and_tolerates_simple_classes(tmp_path):
+def test_run_loader_passes_settings_and_rejects_unknown_options(tmp_path):
     llm = load_agent(ROOT / "agents/example/llm_agent.py", seed=1,
                      settings={"model": "m", "base_url": "http://example.invalid", "temperature": 0.2})
     assert llm.model == "m" and llm.temperature == 0.2
-    template = load_agent(ROOT / "agents/template/my_agent.py", seed=2, settings={"whatever": 1})
-    assert template.seat is None      # 不认识设置项时会退回更简单的构造
+    with pytest.raises(TypeError):
+        load_agent(ROOT / "agents/template/my_agent.py", seed=2, settings={"whatever": 1})
     plain = write(tmp_path, "plain_agent.py",
                   "class Plain:\n"
                   "    async def act(self, observation, request):\n"
                   "        return {'action': 'pass'}\n")
     assert type(load_agent(plain)).__name__ == "Plain"
+
+
+def test_constructor_error_is_not_retried_without_settings():
+    from agents.run import build_agent
+    calls = []
+
+    class Broken:
+        def __init__(self, seed=None):
+            calls.append(seed)
+            raise TypeError("constructor bug")
+
+    with pytest.raises(TypeError, match="constructor bug"):
+        build_agent(Broken, seed=7)
+    assert calls == [7]

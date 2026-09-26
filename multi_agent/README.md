@@ -47,7 +47,7 @@ python -m multi_agent.run --config multi_agent/config.local.json --once
 
 Agent、凭证和默认输出目录的相对路径均以**配置文件所在目录**为基准。CLI `--output` 则按当前工作目录解析。无需复制九份代码。
 
-入口必须提供 `async def act(self, observation, request)`；`on_game_start`、`on_game_end` 可选，实现时必须是异步方法。加载器与 `agents.run` 共用：构造函数尝试接收 `seed` 和设置，不兼容时尝试仅设置及无参数构造。因此务必让自己的构造函数明确接收需要的设置，避免因不匹配退回默认值。
+入口必须提供 `async def act(self, observation, request)`；`on_game_start`、`on_game_end` 可选，实现时必须是异步方法。加载器与 `agents.run` 共用：显式传入的 `seed` 和设置必须与构造函数匹配，否则启动失败，不会静默丢弃参数。不接受 `seed` 的类应省略实例配置中的 `seed`。
 
 启动器会在连接任何裁判之前加载并检查全部社员对象；错误路径、错误类名或同步接口会阻止整批启动。用户模块及构造函数此时会执行，请勿在其中直接连接比赛或执行长时间阻塞操作。
 
@@ -94,7 +94,7 @@ python -m multi_agent.run --config multi_agent/config.local.json --once
 
 日志不主动记录凭证或异常正文，但包含私人动作；社员自己返回的文本也会写入日志，不要在动作中包含密钥。
 
-## 自检与旧配置兼容
+## 自检
 
 ```powershell
 python -m agents.check agents/template/my_agent.py
@@ -104,6 +104,4 @@ python -m multi_agent.validate
 
 `agents.check` 接受自己的入口和 `--settings`，检查固定场景的合法性；合法兜底也能通过。`multi_agent.validate` 运行离线回归测试，并输出 `runtime/agent-validation/<编号>/` 报告，不调用真实模型。
 
-为保留现有模型评测，未指定 `agent` 的旧配置仍使用 `multi_agent.agent.WerewolfAgent`，其 `defaults.mode` 支持 `baseline` 或 `llm`，保留原来的模型统计与 `--live` 校验。新配置示例默认使用社员模板。
-
-`python -m multi_agent.validate --live <旧配置>` 仅支持所有实例均未指定 `agent` 的内置 LLM 配置，每个实例执行 14 次真实模型调用；任何兜底视为失败。社员配置会明确拒绝该选项，避免误用内置模型替代自己的代码进行验证。自定义模型是否成功调用，需要自己的统计和真实对局确认。
+所有实例必须指定 `agent`，不存在隐式内置策略。运行器不识别模型 `mode`；需要模型时加载自己的模型类，并传入该类支持的构造参数。真实模型验证使用 `agents.check --settings` 和实际对局，模型成功率由 Agent 自行统计。
