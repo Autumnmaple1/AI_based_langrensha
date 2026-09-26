@@ -15,6 +15,8 @@ from werewolf.scenarios import cases, fixture
 
 async def live_check(path):
     _, _, specs = load_config(path)
+    if any("agent" in spec for spec in specs):
+        raise ValueError("--live only supports legacy built-in model configs; use agents.check for member agents (legal fallback also passes)")
     results = []
     async with ClientSession() as session:
         for spec in specs:

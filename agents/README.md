@@ -287,9 +287,9 @@ python -m agents.check agents/my-team/my_agent.py --connect ws://主办方地址
 
 ### 想在本地打一整局
 
-先阅读 [项目 README 的比赛组织与多实例部分](../README.md)。本地需要一个独立裁判、你的 Agent，以及使用其他八份凭证的对手。
+完整操作见 [项目 README：本地同时运行九个自己的 Agent](../README.md#本地同时运行九个自己的-agent)。现在 `multi_agent.run` 可直接加载你的 Agent 文件和类：顶层 `agent` 指向 `../agents/my-team/my_agent.py`，`class` 指定类名，九个配置项分别使用本地生成的九份个人凭证。
 
-`python -m werewolf.demo` 适合观看演示，但它已经带了九个 Agent，不会自动给你的 Agent 留席位。使用多实例运行器补足八个对手时，移除你自己的凭证项，并将 `defaults.mode` 改成 `baseline` 可避免调用模型。
+本地裁判使用 `runtime/local/config.json` 和端口 `8766`；正式比赛凭证另存于 `runtime/match/`。不要使用正式比赛的凭证或服务器进行九人自测。`werewolf.demo` 已自带九个 Agent，不需要同时启动它。
 
 ## 8. 比赛规则中最影响策略的部分
 

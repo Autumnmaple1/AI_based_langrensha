@@ -142,6 +142,80 @@ async def test_batch_launcher_nine_agents_two_games_pause_reconnect(tmp_path):
     assert "secret-" not in logs and "host" not in logs
 
 
+async def test_member_agents_nine_independent_instances(tmp_path):
+    path, credentials = write_config(tmp_path, "ws://placeholder")
+    member = tmp_path / "member.py"
+    member.write_text('''from agents.template.my_agent import MyAgent
+class StudentAgent(MyAgent):
+    def __init__(self, seed=None, marker=None):
+        super().__init__(seed)
+        self.marker = marker
+        self.started = False
+    async def on_game_start(self, observation):
+        assert not self.started
+        self.started = True
+        await super().on_game_start(observation)
+    async def act(self, observation, request):
+        assert self.started and self.marker == "configured"
+        if request["type"] in ("speech", "speech_dying"):
+            return {"action": "speak", "text": "member-loaded"}
+        return await super().act(observation, request)
+''', encoding="utf-8")
+    data = json.loads(path.read_text())
+    data.update(agent="member.py", **{"class": "StudentAgent"}, defaults={"marker": "configured"})
+    app = create_app(dict(agents=credentials, admin_token="host", auto_start=True,
+                          pace_ms=0, step_interval_ms=0,
+                          limits=dict(action_timeout_ms=2000, max_days=1)), ":memory:")
+    async with serve(app) as base:
+        data["server"] = base + "/ws/agent"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        report = await run_config(path, once=True, duration=15)
+        assert len(report) == 9
+        assert all(r["completed_games"] == 1 and not r["sdk_errors"] for r in report)
+        assert all(r["decisions"] > 0 for r in report)
+        assert verify_replay(app[HUB_KEY].store.replay(app[HUB_KEY].game.id))["verified"]
+    logs = "".join(p.read_text(encoding="utf-8") for p in tmp_path.glob("runs/*/*.jsonl"))
+    assert "member-loaded" in logs and "secret-" not in logs
+
+
+def test_member_overrides_and_invalid_interface(tmp_path):
+    from .run import load_members, ConfigError
+    path, _ = write_config(tmp_path, "ws://unused")
+    (tmp_path / "member.py").write_text('''class Student:
+    def __init__(self, seed=None, label=None):
+        self.label = label
+    async def act(self, observation, request):
+        return {"action": "pass"}
+class Other(Student):
+    pass
+class Invalid:
+    def act(self, observation, request):
+        return {}
+''', encoding="utf-8")
+    data = json.loads(path.read_text())
+    data.update(agent="member.py", **{"class": "Student"}, defaults={"label": "default"})
+    data["agents"][0].update(agent="member.py", **{"class": "Other"}, settings={"label": "override"})
+    path.write_text(json.dumps(data), encoding="utf-8")
+    members = load_members(load_config(path)[2])
+    assert len({id(a) for a in members.values()}) == 9
+    assert type(members[0]).__name__ == "Other" and members[0].label == "override"
+    assert members[1].label == "default"
+    data["agents"][-1]["class"] = "Invalid"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ConfigError, match="act must be async"):
+        load_members(load_config(path)[2])
+
+
+async def test_live_member_config_is_not_silently_replaced(tmp_path):
+    from .validate import live_check
+    path, _ = write_config(tmp_path, "ws://unused")
+    (tmp_path / "member.py").write_text("", encoding="utf-8")
+    data = json.loads(path.read_text()); data["agent"] = "member.py"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="--live only supports"):
+        await live_check(path)
+
+
 def test_duplicate_ids_rejected(tmp_path):
     path, _ = write_config(tmp_path, "ws://localhost/ws/agent")
     data = json.loads(path.read_text()); data["agents"][1]=data["agents"][0]

@@ -1,92 +1,109 @@
-# 多实例狼人杀 Agent
+# 多实例运行器：同时启动社员的 Agent
 
-在项目根目录运行下面的命令（Python 3.11+）。本目录复用上层 `werewolf.sdk` 和协议校验器；
+`python -m multi_agent.run` 从配置加载社员的 Python 文件和类，为每份凭证创建一个独立对象，并复用 `werewolf.sdk` 连接裁判。所有实例在一个进程内异步运行，分别持有自己的历史与实例状态；需要进程隔离时拆成多个配置分别运行。不要通过全局变量或共享文件交换私有状态。
 
-## 1. 先跑校验
+## 本地九人测试
+
+完整的凭证说明、配置 JSON 和看板步骤见 [根 README](../README.md#本地同时运行九个自己的-agent)。以下在项目根目录执行，Python 3.11+。
+
+终端 A：
 
 ```powershell
 python -m pip install -e ".[test]"
-python -m multi_agent.validate
+if (-not (Test-Path runtime/local/config.json)) {
+    python -m werewolf.server --init --config runtime/local/config.json
+}
+python -m werewolf.server --config runtime/local/config.json --db runtime/local/matches.sqlite3 --host 127.0.0.1 --port 8766
 ```
 
-不需要模型密钥，也不占用 8765 端口。脚本启动临时裁判和临时模型 HTTP 服务，真实经过 WebSocket/HTTP 通信，结束后自动关闭。退出码 0 表示通过，1 表示失败。报告位于 `runtime/agent-validation/<本次编号>/`：`summary.json`、`junit.xml`、`tests.txt`。
-
-覆盖范围：
-
-- 狼刀、重投、不杀、弃权；女巫自救、毒药、无药；预言家查验；猎人开枪和放弃；发言、遗言、放逐投票。
-- 模型 JSON 解析、重复字段、非法目标、HTTP 429/500、超时和取消；失败不能算作模型成功。
-- 九个实例连接真实裁判，连续两局、暂停、重连、继续、无超时兜底、相同结算与回放验证。
-- 原项目完整规则/网络/看板数据测试：身份隔离、票数结算、猎人死亡链、鉴权、去重等。
-
-稀有技能由明确的场景强制覆盖，不依赖随机对局碰巧触发。离线测试验证程序和协议，不代表你的外部模型服务已经通过实测，也不保证模型能赢。
-
-## 2. 启动裁判和多个实例
-
-首次创建凭证（已经存在时跳过，命令不会覆盖现有文件）：
-
-```powershell
-python -m werewolf.server --init --config runtime/config.json
-python -m werewolf.server --config runtime/config.json
-```
-
-另开终端，准备配置：
+终端 B 使用同一 Python 环境，首次复制配置并编辑：
 
 ```powershell
 Copy-Item multi_agent/config.example.json multi_agent/config.local.json
-python -m multi_agent.run --config multi_agent/config.local.json
 ```
 
-默认启动九个无需模型的策略实例，打开 http://127.0.0.1:8765 ，用 `runtime/config.json` 中的 `admin_token` 登录并开始游戏。**不要同时运行旧 demo 中的九个 Agent 或其他使用相同 ID 的客户端。** 若旧演示占用了端口，先结束旧进程，或给服务器指定其他 `--port` 并修改配置 `server`。
+示例默认加载 `../agents/template/my_agent.py` 中的 `MyAgent`，九份凭证位于 `../runtime/local/`，不调用模型。使用自己的代码时修改顶层 `agent` 和 `class`，例如 `../agents/my-team/my_agent.py`、`MyAgent`。然后启动：
 
-默认整局结束后重新就绪，可连续测试。`--once` 让每个实例完成一局后退出；`--duration 600` 设置包含等待开局和暂停在内的总时限，超过时限退出码为 1；Ctrl+C 停止并保存报告。
+```powershell
+python -m multi_agent.run --config multi_agent/config.local.json --once
+```
 
-`agents` 数组里有几项就启动几个实例，可以只保留 1～3 项，把其余席位分给其他社员。每项必须使用不同 ID 的独立凭证。裁判需要九个就绪实例才能开局。凭证相对路径以配置文件所在目录为基准。
+打开 [本地看板](http://127.0.0.1:8766)，用 `runtime/local/config.json` 中的 `admin_token` 登录。九人就绪后点击开局，手动推进或切换自动。不要同时运行 demo 或其他使用同一凭证的客户端。
 
-## 3. 接入真实模型
+## 配置字段
 
-编辑 `config.local.json` 的 `defaults`：
+| 位置 | 字段 | 含义 |
+| --- | --- | --- |
+| 顶层 | `server` | 裁判完整 WebSocket 地址 |
+| 顶层 | `agent` | 默认社员 Python 入口文件 |
+| 顶层 | `class` | 可选类名；省略时自动选择文件内首个带 `act` 的类 |
+| 顶层 | `defaults` | 默认构造参数，例如模型配置；可以为空对象 |
+| 顶层 | `output_dir` | 相对配置目录的日志路径，默认 `runs` |
+| 顶层 | `agents` | 实例数组，每项一份不同凭证 |
+| 实例 | `credentials` | 必需：个人凭证 JSON，含 `agent_id`、`token` |
+| 实例 | `seed` | 可选：传给支持它的构造函数的随机种子 |
+| 实例 | `agent` / `class` | 可选：覆盖顶层的文件和类名；换文件时注意同时修改或清除类名 |
+| 实例 | `settings` | 可选：覆盖 `defaults` 中同名构造参数 |
+
+Agent、凭证和默认输出目录的相对路径均以**配置文件所在目录**为基准。CLI `--output` 则按当前工作目录解析。无需复制九份代码。
+
+入口必须提供 `async def act(self, observation, request)`；`on_game_start`、`on_game_end` 可选，实现时必须是异步方法。加载器与 `agents.run` 共用：构造函数尝试接收 `seed` 和设置，不兼容时尝试仅设置及无参数构造。因此务必让自己的构造函数明确接收需要的设置，避免因不匹配退回默认值。
+
+启动器会在连接任何裁判之前加载并检查全部社员对象；错误路径、错误类名或同步接口会阻止整批启动。用户模块及构造函数此时会执行，请勿在其中直接连接比赛或执行长时间阻塞操作。
+
+## 模型与不同策略
+
+模型调用由社员类实现，运行器不强制供应商、模型接口或设置字段。使用仓库中的单实例模型示例时，将顶层入口改为：
 
 ```json
 {
-  "mode": "llm",
-  "base_url": "https://你的服务地址/v1",
-  "model": "你的实际模型名",
-  "api_key_env": "WEREWOLF_API_KEY",
-  "timeout_seconds": 20
+  "agent": "../agents/example/llm_agent.py",
+  "class": "LlmAgent",
+  "defaults": {
+    "base_url": "https://你的服务地址/v1",
+    "model": "你的模型名",
+    "api_key_env": "WEREWOLF_API_KEY",
+    "timeout_seconds": 20
+  }
 }
 ```
 
-`base_url` 是 API 根路径，程序会追加 `/chat/completions`，不要重复填写。设置环境变量后启动：
+这只是配置片段，需要保留 `server` 和九项 `agents`。启动终端设置密钥：
 
 ```powershell
 $env:WEREWOLF_API_KEY = "你的密钥"
-python -m multi_agent.run --config multi_agent/config.local.json
+python -m multi_agent.run --config multi_agent/config.local.json --once
 ```
 
-不同实例可覆盖模型设置，例如：
+此示例追加 `/chat/completions`，失败后返回合法启发式动作。九实例调用可能产生费用和并发限流，合法结果不一定来自模型。
+
+每个实例可以选择不同策略，例如某项配置：
 
 ```json
-{"credentials":"../runtime/agent-01.json", "settings":{"model":"另一个模型", "api_key_env":"TEAM_A_KEY"}}
+{"credentials": "../runtime/local/agent-02.json", "agent": "../agents/example/baseline_agent.py", "class": "BaselineAgent", "seed": 2}
 ```
 
-兼容接口的请求使用 `model`、`messages`，读取 `choices[0].message.content`；不强制服务端 JSON mode，以适配更多服务商。协议参考 [官方 Chat Completions 文档](https://developers.openai.com/api/reference/resources/chat)。若用无需鉴权的本地兼容服务，设置 `api_key_env` 为 `""`。远程裁判地址改为其 `/ws/agent` 地址。
+## 运行选项与结果
 
-每个实例只接收自身 WebSocket 历史，独立创建决策对象和随机数状态，不共享推理历史或狼人私聊。多个实例在一个 Python 进程中异步运行；需要进程隔离时分成多个配置、分别执行启动命令。模型端会收到该实例的游戏历史；Agent 不读取主持人配置。
+- `--once`：每个实例完成一局后退出；省略则结束后继续就绪，等待主持人再次开局。
+- `--duration 600`：总时限，包含连接、等开局及暂停；超时返回非零退出码。
+- `--output runtime/my-runs`：覆盖输出目录，每次仍创建独立编号子目录。
+- `Ctrl+C`：取消所有客户端并保存当前报告。
 
-模型超时预算会给提交动作预留 0.5 秒，并压缩到不超过裁判剩余期限；裁判默认每步 `action_timeout_ms:60000`，因此 `timeout_seconds` 设成等于或略大于裁判期限都安全，实际以裁判剩余时间为准。本版每个行动最多调用一次模型，失败会记录并使用合法策略兜底，避免无限重试增加费用。暂停会取消在途决策，继续后按裁判的新截止时间重新决策；供应商已经处理的调用仍可能计费。
+每次运行产生每个实例的 JSONL 日志与统一 `summary.json`。社员模式记录返回动作、耗时、决策次数、SDK 事件和错误、完成局数及最后结果。模型成功、失败和兜底次数由社员代码自行统计，运行器不作推断。日志中的动作必须结合 `action_ack` 判断是否被裁判接受。暂停导致的取消不会计为一次完成决策。
 
-## 4. 上场前验证真实模型
+日志不主动记录凭证或异常正文，但包含私人动作；社员自己返回的文本也会写入日志，不要在动作中包含密钥。
+
+## 自检与旧配置兼容
 
 ```powershell
-python -m multi_agent.validate --live multi_agent/config.local.json
+python -m agents.check agents/template/my_agent.py
+python -m pytest -q
+python -m multi_agent.validate
 ```
 
-先运行完整离线测试，通过后对配置中的**每个实例调用 14 次真实模型**（九个实例共 126 次，可能产生费用）。不需要裁判，不向真实对局发送动作。每个场景必须由模型返回合法动作；任何超时、非法动作或兜底都判失败并返回非零退出码。女巫和猎人可依法选择放弃；具体毒药/开枪分支由离线强制场景保证编码通路覆盖。
+`agents.check` 接受自己的入口和 `--settings`，检查固定场景的合法性；合法兜底也能通过。`multi_agent.validate` 运行离线回归测试，并输出 `runtime/agent-validation/<编号>/` 报告，不调用真实模型。
 
-可以单独建只含一个实例的配置，先做 14 次校验，再启动九个实例进行实际比赛。实际比赛的可用性、限流和模型策略还需结合对局报告判断。
+为保留现有模型评测，未指定 `agent` 的旧配置仍使用 `multi_agent.agent.WerewolfAgent`，其 `defaults.mode` 支持 `baseline` 或 `llm`，保留原来的模型统计与 `--live` 校验。新配置示例默认使用社员模板。
 
-## 5. 查看结果 / 修改策略
-
-每次启动生成独立 `runs/<本次编号>/`，其中每个实例有一个 JSONL 动作日志和统一 `summary.json`。统计包含 `model_success`、`model_errors`、`fallback`、`baseline`、完成局数、SDK 错误和最后结算。日志不写密钥、鉴权头或模型原始错误正文，但包含私人动作，比赛中只供该成员和主持人查看。
-
-`agent.py` 的 `SYSTEM` 是模型提示词，`WerewolfAgent.act()` 是决策入口；`run.py` 负责多实例生命周期；`validate.py` 是校验入口；校验用的 14 个固定场景在 `werewolf/scenarios.py`（社员自检 `python -m agents.check` 用的是同一套）。通信、去重、重连和暂停恢复复用项目 SDK。
+`python -m multi_agent.validate --live <旧配置>` 仅支持所有实例均未指定 `agent` 的内置 LLM 配置，每个实例执行 14 次真实模型调用；任何兜底视为失败。社员配置会明确拒绝该选项，避免误用内置模型替代自己的代码进行验证。自定义模型是否成功调用，需要自己的统计和真实对局确认。

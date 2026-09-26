@@ -1,22 +1,45 @@
 {
-  "server": "ws://127.0.0.1:8765/ws/agent",
+  "server": "ws://127.0.0.1:8766/ws/agent",
   "output_dir": "runs",
-  "defaults": {
-    "mode": "llm",
-    "base_url": "https://api.deepseek.com",
-    "model": "deepseek-flash",
-    "api_key_env": "WEREWOLF_API_KEY",
-    "timeout_seconds": 60
-  },
+  "defaults": {},
   "agents": [
-    {"credentials": "../runtime/agent-01.json", "seed": 1},
-    {"credentials": "../runtime/agent-02.json", "seed": 2},
-    {"credentials": "../runtime/agent-03.json", "seed": 3},
-    {"credentials": "../runtime/agent-04.json", "seed": 4},
-    {"credentials": "../runtime/agent-05.json", "seed": 5},
-    {"credentials": "../runtime/agent-06.json", "seed": 6},
-    {"credentials": "../runtime/agent-07.json", "seed": 7},
-    {"credentials": "../runtime/agent-08.json", "seed": 8},
-    {"credentials": "../runtime/agent-09.json", "seed": 9}
-  ]
+    {
+      "credentials": "../runtime/local/agent-01.json",
+      "seed": 1
+    },
+    {
+      "credentials": "../runtime/local/agent-02.json",
+      "seed": 2
+    },
+    {
+      "credentials": "../runtime/local/agent-03.json",
+      "seed": 3
+    },
+    {
+      "credentials": "../runtime/local/agent-04.json",
+      "seed": 4
+    },
+    {
+      "credentials": "../runtime/local/agent-05.json",
+      "seed": 5
+    },
+    {
+      "credentials": "../runtime/local/agent-06.json",
+      "seed": 6
+    },
+    {
+      "credentials": "../runtime/local/agent-07.json",
+      "seed": 7
+    },
+    {
+      "credentials": "../runtime/local/agent-08.json",
+      "seed": 8
+    },
+    {
+      "credentials": "../runtime/local/agent-09.json",
+      "seed": 9
+    }
+  ],
+  "agent": "../agents/template/my_agent.py",
+  "class": "MyAgent"
 }

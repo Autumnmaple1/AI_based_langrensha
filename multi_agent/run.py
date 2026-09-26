@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 import json
+import inspect
 import os
 import re
 from pathlib import Path
@@ -10,6 +11,7 @@ from urllib.parse import urlsplit
 from aiohttp import ClientSession
 from werewolf.sdk import AgentClient
 from .agent import WerewolfAgent
+from agents.run import load_agent
 
 
 class ConfigError(ValueError):
@@ -32,6 +34,15 @@ def load_config(path):
             raise ValueError(f"Duplicate agent_id: {aid}")
         ids.add(aid)
         settings = {**data.get("defaults", {}), **item.get("settings", {})}
+        agent_file = item.get("agent", data.get("agent"))
+        class_name = item.get("class", data.get("class"))
+        if agent_file is not None:
+            agent_path = (path.parent / agent_file).resolve()
+            if not agent_path.is_file():
+                raise ConfigError(f"Agent file not found: {agent_path}")
+            specs.append(dict(agent_id=aid, token=token, settings=settings,
+                              seed=item.get("seed", index), agent=str(agent_path), class_name=class_name))
+            continue
         mode = settings.get("mode", "baseline")
         if mode not in {"llm", "baseline"}:
             raise ValueError("mode must be llm or baseline")
@@ -57,6 +68,55 @@ def load_config(path):
     return data, server, specs
 
 
+class MemberAgent:
+    """Record decisions without requiring members to implement runner-specific APIs."""
+
+    def __init__(self, agent, log):
+        self.agent, self.log = agent, log
+        self.stats = dict(decisions=0)
+
+    async def on_game_start(self, observation):
+        if hasattr(self.agent, "on_game_start"):
+            await self.agent.on_game_start(observation)
+
+    async def on_game_end(self, result):
+        if hasattr(self.agent, "on_game_end"):
+            await self.agent.on_game_end(result)
+
+    async def act(self, observation, request):
+        started = asyncio.get_running_loop().time()
+        try:
+            action = await self.agent.act(observation, request)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.log(dict(event="decision_error", request_id=request["request_id"], error=type(exc).__name__))
+            raise
+        self.stats["decisions"] += 1
+        self.log(dict(event="decision", game_id=request["game_id"], request_id=request["request_id"],
+                      kind=request["type"], action=action,
+                      elapsed_ms=round((asyncio.get_running_loop().time()-started)*1000)))
+        return action
+
+
+def load_members(specs):
+    """Load and validate every member before opening any referee connection."""
+    members = {}
+    for index, spec in enumerate(specs):
+        if "agent" not in spec:
+            continue  # Compatibility for existing built-in model configurations.
+        try:
+            agent = load_agent(spec["agent"], spec["class_name"], spec["seed"], spec["settings"])
+        except (Exception, SystemExit) as exc:
+            raise ConfigError(f"Cannot load member {spec['agent_id']} ({type(exc).__name__}); check agent and settings") from exc
+        for method in ("act", "on_game_start", "on_game_end"):
+            if method == "act" or hasattr(agent, method):
+                if not inspect.iscoroutinefunction(getattr(agent, method, None)):
+                    raise ConfigError(f"{spec['agent_id']}: {method} must be async def")
+        members[index] = agent
+    return members
+
+
 class LoggedClient(AgentClient):
     def __init__(self, *args, log, **kwargs):
         super().__init__(*args, **kwargs)
@@ -73,6 +133,7 @@ class LoggedClient(AgentClient):
 
 async def run_config(path, *, once=False, duration=None, output=None):
     data, server, specs = load_config(path)
+    members = load_members(specs)
     output = Path(output or (Path(path).resolve().parent / data.get("output_dir", "runs")))
     from datetime import datetime, timezone
     from uuid import uuid4
@@ -89,11 +150,12 @@ async def run_config(path, *, once=False, duration=None, output=None):
                 def log(event, handle=handle, aid=spec["agent_id"]):
                     handle.write(json.dumps(dict(at=datetime.now(timezone.utc).isoformat(), agent_id=aid, **event), ensure_ascii=False)+"\n")
                     handle.flush()
-                agent = WerewolfAgent(spec["settings"], session, seed=spec["seed"], log=log)
+                agent = (MemberAgent(members[index], log) if index in members else
+                         WerewolfAgent(spec["settings"], session, seed=spec["seed"], log=log))
                 client = LoggedClient(server, spec["agent_id"], spec["token"], agent, log=log, stop_after_game=once)
                 agents.append(agent); clients.append(client)
-                tasks.append(asyncio.create_task(client.run()))
             try:
+                tasks = [asyncio.create_task(client.run()) for client in clients]
                 if duration:
                     async with asyncio.timeout(duration):
                         await asyncio.gather(*tasks)
